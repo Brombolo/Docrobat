@@ -13,6 +13,9 @@ set(DOCROBAT_SOURCES
     src/MainWindow.cpp
     src/PDFDocument.cpp
     src/PDFView.cpp
+    src/PDFObjectEditor.cpp
+    src/PDFFormManager.cpp
+    src/PDFSecurity.cpp
 )
 
 set(DOCROBAT_HEADERS
@@ -21,6 +24,9 @@ set(DOCROBAT_HEADERS
     src/MainWindow.h
     src/PDFDocument.h
     src/PDFView.h
+    src/PDFObjectEditor.h
+    src/PDFFormManager.h
+    src/PDFSecurity.h
 )
 
 # Executable target

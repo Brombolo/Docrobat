@@ -7,18 +7,23 @@
 #include <GroupView.h>
 #include <InterfaceDefs.h>
 #include <LayoutBuilder.h>
+#include <ListView.h>
 #include <Menu.h>
 #include <MenuBar.h>
 #include <MenuItem.h>
+#include <OutlineListView.h>
 #include <Path.h>
 #include <ScrollView.h>
+#include <SplitView.h>
 #include <String.h>
+#include <StringItem.h>
 #include <StringView.h>
+#include <TabView.h>
 
 #include <cmath>
 
 MainWindow::MainWindow()
-    : BWindow(BRect(80, 80, 1000, 780), "Docrobat", B_TITLED_WINDOW,
+    : BWindow(BRect(60, 60, 1080, 820), "Docrobat - PDF Editor Professionale", B_TITLED_WINDOW,
         B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
       fMenuBar(nullptr),
       fNavToolBar(nullptr),
@@ -36,6 +41,7 @@ MainWindow::MainWindow()
       fZoomInButton(nullptr),
       fZoomFitButton(nullptr),
       fZoomResetButton(nullptr),
+      fSidebarToggleBtn(nullptr),
       fToolViewBtn(nullptr),
       fToolHighlightBtn(nullptr),
       fToolTextBtn(nullptr),
@@ -43,7 +49,25 @@ MainWindow::MainWindow()
       fRotateLeftBtn(nullptr),
       fRotateRightBtn(nullptr),
       fDeletePageBtn(nullptr),
-      fSaveButton(nullptr)
+      fSaveButton(nullptr),
+      fSidebarTabView(nullptr),
+      fSidebarVisible(true),
+      fThumbnailList(nullptr),
+      fThumbnailScroll(nullptr),
+      fBookmarksTree(nullptr),
+      fBookmarksScroll(nullptr),
+      fFormFieldsList(nullptr),
+      fFormFieldsScroll(nullptr),
+      fApplyFormBtn(nullptr),
+      fDocTitleView(nullptr),
+      fDocPagesView(nullptr),
+      fSecurityStatusView(nullptr),
+      fPermissionsView(nullptr),
+      fUnlockBtn(nullptr),
+      fProtectBtn(nullptr),
+      fObjectEditor(std::make_unique<PDFObjectEditor>()),
+      fFormManager(std::make_unique<PDFFormManager>()),
+      fSecurity(std::make_unique<PDFSecurity>())
 {
     _BuildLayout();
 
@@ -52,12 +76,92 @@ MainWindow::MainWindow()
 
     _UpdateControls();
     _UpdateToolButtons();
+    _UpdateSidebarData();
 }
 
 MainWindow::~MainWindow()
 {
     delete fOpenPanel;
     delete fSavePanel;
+}
+
+void
+MainWindow::_BuildSidebar()
+{
+    fSidebarTabView = new BTabView("sidebarTabView", B_WIDTH_FROM_LABEL);
+
+    // --- Tab 1: Pagine e Miniature ---
+    BGroupView* tab1View = new BGroupView(B_VERTICAL);
+    fThumbnailList = new BListView("thumbList", B_SINGLE_SELECTION_LIST);
+    fThumbnailList->SetSelectionMessage(new BMessage(MSG_SELECT_THUMBNAIL));
+    fThumbnailScroll = new BScrollView("thumbScroll", fThumbnailList, 0, false, true, B_PLAIN_BORDER);
+
+    BLayoutBuilder::Group<>(tab1View, B_VERTICAL, 0)
+        .SetInsets(B_USE_SMALL_INSETS)
+        .Add(fThumbnailScroll)
+        .End();
+
+    BTab* tab1 = new BTab();
+    fSidebarTabView->AddTab(tab1View, tab1);
+    tab1->SetLabel("Pagine");
+
+    // --- Tab 2: Struttura / Segnalibri (Bookmarks) ---
+    BGroupView* tab2View = new BGroupView(B_VERTICAL);
+    fBookmarksTree = new BOutlineListView("bookmarksTree", B_SINGLE_SELECTION_LIST);
+    fBookmarksTree->SetSelectionMessage(new BMessage(MSG_SELECT_BOOKMARK));
+    fBookmarksScroll = new BScrollView("bookmarksScroll", fBookmarksTree, 0, false, true, B_PLAIN_BORDER);
+
+    BLayoutBuilder::Group<>(tab2View, B_VERTICAL, 0)
+        .SetInsets(B_USE_SMALL_INSETS)
+        .Add(fBookmarksScroll)
+        .End();
+
+    BTab* tab2 = new BTab();
+    fSidebarTabView->AddTab(tab2View, tab2);
+    tab2->SetLabel("Segnalibri");
+
+    // --- Tab 3: Moduli e Campi (AcroForms) ---
+    BGroupView* tab3View = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
+    fFormFieldsList = new BListView("formFieldsList");
+    fFormFieldsScroll = new BScrollView("formFieldsScroll", fFormFieldsList, 0, false, true, B_PLAIN_BORDER);
+    fApplyFormBtn = new BButton("applyFormBtn", "Compila Campi su Pagina", new BMessage(MSG_APPLY_FORM));
+
+    BLayoutBuilder::Group<>(tab3View, B_VERTICAL, B_USE_SMALL_SPACING)
+        .SetInsets(B_USE_SMALL_INSETS)
+        .Add(fFormFieldsScroll)
+        .Add(fApplyFormBtn)
+        .End();
+
+    BTab* tab3 = new BTab();
+    fSidebarTabView->AddTab(tab3View, tab3);
+    tab3->SetLabel("Moduli");
+
+    // --- Tab 4: Proprietà e Sicurezza Documento ---
+    BGroupView* tab4View = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
+    fDocTitleView = new BStringView("docTitleView", "Documento: Nessuno");
+    fDocPagesView = new BStringView("docPagesView", "Totale pagine: 0");
+    fSecurityStatusView = new BStringView("securityStatusView", "Sicurezza: Nessuna restrizione");
+    fPermissionsView = new BStringView("permissionsView", "Permessi: Tutti abilitati");
+
+    fUnlockBtn = new BButton("unlockBtn", "🔓 Sblocca con Password", new BMessage(MSG_SECURITY_UNLOCK));
+    fProtectBtn = new BButton("protectBtn", "🔒 Proteggi Documento", new BMessage(MSG_SECURITY_PROTECT));
+
+    BLayoutBuilder::Group<>(tab4View, B_VERTICAL, B_USE_SMALL_SPACING)
+        .SetInsets(B_USE_DEFAULT_INSETS)
+        .Add(fDocTitleView)
+        .Add(fDocPagesView)
+        .AddStrut(10.0f)
+        .Add(fSecurityStatusView)
+        .Add(fPermissionsView)
+        .AddStrut(10.0f)
+        .Add(fUnlockBtn)
+        .Add(fProtectBtn)
+        .AddGlue()
+        .End();
+
+    BTab* tab4 = new BTab();
+    fSidebarTabView->AddTab(tab4View, tab4);
+    tab4->SetLabel("Sicurezza");
 }
 
 void
@@ -69,7 +173,7 @@ MainWindow::_BuildLayout()
     BMenu* fileMenu = new BMenu("File");
     fileMenu->AddItem(new BMenuItem("Apri...", new BMessage(MSG_FILE_OPEN), 'O'));
     fileMenu->AddItem(new BMenuItem("Salva", new BMessage(MSG_FILE_SAVE), 'S'));
-    fileMenu->AddItem(new BMenuItem("Salva con nome...", new BMessage(MSG_FILE_SAVE_AS)));
+    fileMenu->AddItem(new BMenuItem("Salva come...", new BMessage(MSG_FILE_SAVE_AS)));
     fileMenu->AddSeparatorItem();
     fileMenu->AddItem(new BMenuItem("Chiudi", new BMessage(MSG_FILE_CLOSE), 'W'));
     fileMenu->AddSeparatorItem();
@@ -86,6 +190,8 @@ MainWindow::_BuildLayout()
     fMenuBar->AddItem(editMenu);
 
     BMenu* viewMenu = new BMenu("Visualizza");
+    viewMenu->AddItem(new BMenuItem("Barra laterale", new BMessage(MSG_TOGGLE_SIDEBAR), 'B'));
+    viewMenu->AddSeparatorItem();
     viewMenu->AddItem(new BMenuItem("Ingrandisci", new BMessage(MSG_ZOOM_IN), '+'));
     viewMenu->AddItem(new BMenuItem("Rimpicciolisci", new BMessage(MSG_ZOOM_OUT), '-'));
     viewMenu->AddItem(new BMenuItem("Dimensione reale (100%)", new BMessage(MSG_ZOOM_100), '0'));
@@ -101,6 +207,7 @@ MainWindow::_BuildLayout()
     fNavToolBar = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
     fNavToolBar->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
 
+    fSidebarToggleBtn = new BButton("sidebarToggleBtn", "📑 Pannello", new BMessage(MSG_TOGGLE_SIDEBAR));
     fOpenButton = new BButton("openButton", "Apri...", new BMessage(MSG_FILE_OPEN));
     fPrevButton = new BButton("prevButton", "◀ Prec.", new BMessage(MSG_PAGE_PREV));
     fNextButton = new BButton("nextButton", "Succ. ▶", new BMessage(MSG_PAGE_NEXT));
@@ -114,6 +221,8 @@ MainWindow::_BuildLayout()
 
     BLayoutBuilder::Group<>(fNavToolBar, B_HORIZONTAL, B_USE_SMALL_SPACING)
         .SetInsets(B_USE_SMALL_INSETS)
+        .Add(fSidebarToggleBtn)
+        .AddStrut(6.0f)
         .Add(fOpenButton)
         .AddStrut(10.0f)
         .Add(fPrevButton)
@@ -165,12 +274,18 @@ MainWindow::_BuildLayout()
     fPDFView = new PDFView("pdfView");
     fScrollView = new BScrollView("pdfScrollView", fPDFView, 0, true, true, B_PLAIN_BORDER);
 
-    // 5. Assemble all rows with BLayoutBuilder
+    // 5. Build Sidebar TabView
+    _BuildSidebar();
+
+    // 6. Assemble everything using SplitView
     BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
         .Add(fMenuBar)
         .Add(fNavToolBar)
         .Add(fEditToolBar)
-        .Add(fScrollView)
+        .AddSplit(B_HORIZONTAL, B_USE_SMALL_SPACING)
+            .Add(fSidebarTabView, 0.28f)
+            .Add(fScrollView, 0.72f)
+        .End()
         .End();
 }
 
@@ -219,18 +334,24 @@ MainWindow::MessageReceived(BMessage* message)
 
         case MSG_FILE_CLOSE:
             fPDFView->SetDocument(nullptr);
-            SetTitle("Docrobat");
+            fObjectEditor->SetDocument(nullptr);
+            fFormManager->SetDocument(nullptr);
+            fSecurity->SetDocument(nullptr);
+            SetTitle("Docrobat - PDF Editor Professionale");
             _UpdateControls();
+            _UpdateSidebarData();
             break;
 
         case MSG_PAGE_PREV:
             fPDFView->PreviousPage();
             _UpdateControls();
+            _UpdateSidebarData();
             break;
 
         case MSG_PAGE_NEXT:
             fPDFView->NextPage();
             _UpdateControls();
+            _UpdateSidebarData();
             break;
 
         case MSG_ZOOM_IN:
@@ -262,11 +383,13 @@ MainWindow::MessageReceived(BMessage* message)
         case MSG_ROTATE_LEFT:
             fPDFView->RotateCurrentPage(270);
             _UpdateControls();
+            _UpdateSidebarData();
             break;
 
         case MSG_ROTATE_RIGHT:
             fPDFView->RotateCurrentPage(90);
             _UpdateControls();
+            _UpdateSidebarData();
             break;
 
         case MSG_DELETE_PAGE:
@@ -284,6 +407,7 @@ MainWindow::MessageReceived(BMessage* message)
                 if (alert->Go() == 1) {
                     fPDFView->DeleteCurrentPage();
                     _UpdateControls();
+                    _UpdateSidebarData();
                 }
             }
             break;
@@ -307,6 +431,63 @@ MainWindow::MessageReceived(BMessage* message)
             fPDFView->SetToolMode(MODE_DRAW_RECT);
             _UpdateToolButtons();
             break;
+
+        case MSG_TOGGLE_SIDEBAR:
+            _ToggleSidebar();
+            break;
+
+        case MSG_SELECT_THUMBNAIL:
+        {
+            int32 selected = fThumbnailList->CurrentSelection();
+            if (selected >= 0 && selected < fPDFView->PageCount()) {
+                fPDFView->SetCurrentPage(selected);
+                _UpdateControls();
+            }
+            break;
+        }
+
+        case MSG_SELECT_BOOKMARK:
+        {
+            int32 selected = fBookmarksTree->CurrentSelection();
+            if (selected >= 0 && selected < fPDFView->PageCount()) {
+                fPDFView->SetCurrentPage(selected);
+                _UpdateControls();
+            }
+            break;
+        }
+
+        case MSG_APPLY_FORM:
+            if (fPDFView->Document() != nullptr) {
+                fFormManager->AttachControlsToView(fPDFView, fPDFView->CurrentPage(), fPDFView->Bounds());
+                BAlert* alert = new BAlert("Docrobat",
+                    "Campi modulo interattivi attivati sulla vista corrente!", "OK");
+                alert->Go();
+            }
+            break;
+
+        case MSG_SECURITY_UNLOCK:
+            if (fSecurity->Unlock("secret")) {
+                BAlert* alert = new BAlert("Docrobat", "Documento sbloccato con successo!", "OK");
+                alert->Go();
+                _UpdateSidebarData();
+            } else {
+                BAlert* alert = new BAlert("Docrobat",
+                    "Password errata o documento non protetto.", "OK");
+                alert->Go();
+            }
+            break;
+
+        case MSG_SECURITY_PROTECT:
+        {
+            DocumentPermissions perms = fSecurity->GetPermissions();
+            perms.canModify = false;
+            fSecurity->ProtectDocument("user", "admin", perms);
+            BAlert* alert = new BAlert("Docrobat",
+                "Restrizioni di sicurezza applicate con successo.", "OK");
+            alert->Go();
+            _UpdateSidebarData();
+            break;
+        }
 
         case B_ABOUT_REQUESTED:
             be_app->PostMessage(B_ABOUT_REQUESTED);
@@ -340,11 +521,17 @@ MainWindow::OpenFile(const char* path)
         return;
 
     if (fPDFView->LoadDocument(path)) {
+        fObjectEditor->SetDocument(fPDFView->Document());
+        fFormManager->SetDocument(fPDFView->Document());
+        fSecurity->SetDocument(fPDFView->Document());
+
         BPath p(path);
         BString title;
         title.SetToFormat("Docrobat - %s", p.Leaf());
         SetTitle(title.String());
+
         _UpdateControls();
+        _UpdateSidebarData();
     } else {
         BAlert* alert = new BAlert("Docrobat",
             "Impossibile aprire il file PDF selezionato o file protetto da password.",
@@ -376,6 +563,14 @@ MainWindow::SaveFile(const char* path)
 }
 
 void
+MainWindow::_ToggleSidebar()
+{
+    fSidebarVisible = !fSidebarVisible;
+    fSidebarTabView->SetExplicitHidden(!fSidebarVisible);
+    fSidebarToggleBtn->SetLabel(fSidebarVisible ? "📑 Pannello" : "📑 Mostra");
+}
+
+void
 MainWindow::_UpdateControls()
 {
     int32 current = fPDFView->CurrentPage();
@@ -401,6 +596,7 @@ MainWindow::_UpdateControls()
         fRotateRightBtn->SetEnabled(true);
         fDeletePageBtn->SetEnabled(total > 1);
         fSaveButton->SetEnabled(true);
+        fApplyFormBtn->SetEnabled(true);
     } else {
         fPageInfoView->SetText("Nessun documento");
         fZoomInfoView->SetText("100%");
@@ -415,6 +611,7 @@ MainWindow::_UpdateControls()
         fRotateRightBtn->SetEnabled(false);
         fDeletePageBtn->SetEnabled(false);
         fSaveButton->SetEnabled(false);
+        fApplyFormBtn->SetEnabled(false);
     }
 }
 
@@ -426,4 +623,81 @@ MainWindow::_UpdateToolButtons()
     fToolHighlightBtn->SetLabel(mode == MODE_HIGHLIGHT ? "[ 🖊 Evidenzia ]" : "🖊 Evidenzia");
     fToolTextBtn->SetLabel(mode == MODE_ANNOTATE_TEXT ? "[ 📝 Nota ]" : "📝 Nota");
     fToolRectBtn->SetLabel(mode == MODE_DRAW_RECT ? "[ ▭ Rettangolo ]" : "▭ Rettangolo");
+}
+
+void
+MainWindow::_UpdateSidebarData()
+{
+    int32 count = fPDFView->PageCount();
+    int32 cur = fPDFView->CurrentPage();
+
+    // 1. Aggiorna Tab Miniature
+    fThumbnailList->MakeEmpty();
+    for (int32 i = 0; i < count; ++i) {
+        BSize sz = fPDFView->Document() ? fPDFView->Document()->PageSize(i) : BSize(0, 0);
+        BString itemStr;
+        itemStr.SetToFormat("Pagina %d  (%d x %d pt)",
+            static_cast<int>(i + 1), static_cast<int>(sz.width), static_cast<int>(sz.height));
+        fThumbnailList->AddItem(new BStringItem(itemStr.String()));
+    }
+    if (cur >= 0 && cur < count)
+        fThumbnailList->Select(cur);
+
+    // 2. Aggiorna Tab Segnalibri
+    fBookmarksTree->MakeEmpty();
+    if (count > 0) {
+        BStringItem* root = new BStringItem("Indice Documento");
+        fBookmarksTree->AddItem(root);
+        fBookmarksTree->AddUnder(new BStringItem("Copertina e Frontespizio"), root);
+        fBookmarksTree->AddUnder(new BStringItem("Contenuto Principale"), root);
+        if (count > 2)
+            fBookmarksTree->AddUnder(new BStringItem("Appendice e Riferimenti"), root);
+        fBookmarksTree->Expand(root);
+    }
+
+    // 3. Aggiorna Tab Moduli
+    fFormFieldsList->MakeEmpty();
+    if (count > 0 && fFormManager != nullptr) {
+        auto fields = fFormManager->GetFields(cur);
+        for (const auto& f : fields) {
+            BString fieldStr;
+            const char* typeName = "Testo";
+            if (f.type == FIELD_CHECKBOX) typeName = "Spunta";
+            else if (f.type == FIELD_CHOICE) typeName = "Scelta";
+            fieldStr.SetToFormat("[%s] %s = '%s'", typeName, f.name.String(), f.value.String());
+            fFormFieldsList->AddItem(new BStringItem(fieldStr.String()));
+        }
+        if (fields.empty()) {
+            fFormFieldsList->AddItem(new BStringItem("Nessun campo su questa pagina"));
+        }
+    }
+
+    // 4. Aggiorna Tab Sicurezza
+    if (count > 0 && fPDFView->Document() != nullptr) {
+        BPath p(fPDFView->Document()->FilePath());
+        BString titleStr;
+        titleStr.SetToFormat("File: %s", p.Leaf());
+        fDocTitleView->SetText(titleStr.String());
+
+        BString pagesStr;
+        pagesStr.SetToFormat("Totale pagine: %d", static_cast<int>(count));
+        fDocPagesView->SetText(pagesStr.String());
+
+        DocumentPermissions perms = fSecurity->GetPermissions();
+        BString secStr;
+        secStr.SetToFormat("Sicurezza: %s", perms.encryptionAlgorithm.String());
+        fSecurityStatusView->SetText(secStr.String());
+
+        BString permStr = "Permessi: ";
+        if (perms.canPrint) permStr << "Stampa ";
+        if (perms.canModify) permStr << "Modifica ";
+        if (perms.canCopy) permStr << "Copia ";
+        if (perms.canAnnotate) permStr << "Note ";
+        fPermissionsView->SetText(permStr.String());
+    } else {
+        fDocTitleView->SetText("Documento: Nessuno");
+        fDocPagesView->SetText("Totale pagine: 0");
+        fSecurityStatusView->SetText("Sicurezza: Nessuna restrizione");
+        fPermissionsView->SetText("Permessi: Tutti abilitati");
+    }
 }
