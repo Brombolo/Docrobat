@@ -1,6 +1,8 @@
 #ifndef MAIN_WINDOW_H
 #define MAIN_WINDOW_H
 
+#include "Annotation.h"
+
 #include <Window.h>
 #include <FilePanel.h>
 #include <Entry.h>
@@ -24,7 +26,14 @@ enum {
     MSG_ZOOM_IN         = 'ZMIN',
     MSG_ZOOM_OUT        = 'ZOUT',
     MSG_ZOOM_100        = 'Z100',
-    MSG_ZOOM_FIT        = 'ZFPG'
+    MSG_ZOOM_FIT        = 'ZFPG',
+    MSG_ROTATE_LEFT     = 'ROTL',
+    MSG_ROTATE_RIGHT    = 'ROTR',
+    MSG_DELETE_PAGE     = 'DELP',
+    MSG_TOOL_VIEW       = 'TMOV',
+    MSG_TOOL_HIGHLIGHT  = 'THIL',
+    MSG_TOOL_TEXT       = 'TTXT',
+    MSG_TOOL_RECT       = 'TREC'
 };
 
 class MainWindow : public BWindow {
@@ -37,17 +46,22 @@ public:
 
     void                    OpenFile(const entry_ref& ref);
     void                    OpenFile(const char* path);
+    void                    SaveFile(const char* path);
 
 private:
     void                    _BuildLayout();
     void                    _UpdateControls();
+    void                    _UpdateToolButtons();
 
     BMenuBar*               fMenuBar;
-    BGroupView*             fToolBar;
+    BGroupView*             fNavToolBar;
+    BGroupView*             fEditToolBar;
     PDFView*                fPDFView;
     BScrollView*            fScrollView;
     BFilePanel*             fOpenPanel;
+    BFilePanel*             fSavePanel;
 
+    // Navigation Controls
     BButton*                fOpenButton;
     BButton*                fPrevButton;
     BButton*                fNextButton;
@@ -57,6 +71,16 @@ private:
     BButton*                fZoomInButton;
     BButton*                fZoomFitButton;
     BButton*                fZoomResetButton;
+
+    // Editing & Tool Controls
+    BButton*                fToolViewBtn;
+    BButton*                fToolHighlightBtn;
+    BButton*                fToolTextBtn;
+    BButton*                fToolRectBtn;
+    BButton*                fRotateLeftBtn;
+    BButton*                fRotateRightBtn;
+    BButton*                fDeletePageBtn;
+    BButton*                fSaveButton;
 };
 
 #endif // MAIN_WINDOW_H

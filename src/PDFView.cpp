@@ -1,5 +1,6 @@
 #include "PDFView.h"
 
+#include <Cursor.h>
 #include <Font.h>
 #include <InterfaceDefs.h>
 #include <ScrollBar.h>
@@ -16,8 +17,12 @@ PDFView::PDFView(const char* name)
       fCurrentPage(0),
       fZoom(1.0f),
       fRenderedBitmap(nullptr),
+      fToolMode(MODE_VIEW),
       fIsDragging(false),
-      fLastMousePos(0, 0)
+      fLastMousePos(0, 0),
+      fIsAnnotating(false),
+      fDragStart(0, 0),
+      fDragCurrent(0, 0)
 {
 }
 
@@ -94,6 +99,72 @@ PDFView::Draw(BRect updateRect)
     // Draw border around page
     SetHighColor(tint_color(ui_color(B_PANEL_BACKGROUND_COLOR), B_DARKEN_4_TINT));
     StrokeRect(pageRect);
+
+    // Draw existing annotations overlay
+    if (fDocument != nullptr) {
+        const auto& annotations = fDocument->Annotations(fCurrentPage);
+        for (const auto& ann : annotations) {
+            BRect annRect(
+                pageRect.left + ann.pageUnitBounds.left * pageRect.Width(),
+                pageRect.top + ann.pageUnitBounds.top * pageRect.Height(),
+                pageRect.left + ann.pageUnitBounds.right * pageRect.Width(),
+                pageRect.top + ann.pageUnitBounds.bottom * pageRect.Height()
+            );
+
+            if (ann.type == ANNOTATION_HIGHLIGHT) {
+                SetDrawingMode(B_OP_ALPHA);
+                SetHighColor(255, 235, 59, 120);
+                FillRect(annRect);
+                SetDrawingMode(B_OP_COPY);
+            } else if (ann.type == ANNOTATION_RECT) {
+                SetHighColor(ann.color);
+                SetPenSize(2.0f);
+                StrokeRect(annRect);
+                SetPenSize(1.0f);
+            } else if (ann.type == ANNOTATION_TEXT) {
+                SetHighColor(255, 245, 157);
+                FillRect(annRect);
+                SetHighColor(200, 180, 50);
+                StrokeRect(annRect);
+
+                SetHighColor(30, 30, 30);
+                BFont noteFont;
+                GetFont(&noteFont);
+                noteFont.SetSize(11.0f);
+                SetFont(&noteFont);
+                DrawString(ann.text.String(), BPoint(annRect.left + 5.0f, annRect.top + 14.0f));
+            }
+        }
+    }
+
+    // Draw live overlay while dragging interactive annotation
+    if (fIsAnnotating) {
+        BRect selRect(
+            std::min(fDragStart.x, fDragCurrent.x),
+            std::min(fDragStart.y, fDragCurrent.y),
+            std::max(fDragStart.x, fDragCurrent.x),
+            std::max(fDragStart.y, fDragCurrent.y)
+        );
+
+        if (fToolMode == MODE_HIGHLIGHT) {
+            SetDrawingMode(B_OP_ALPHA);
+            SetHighColor(255, 235, 59, 100);
+            FillRect(selRect);
+            SetDrawingMode(B_OP_COPY);
+            SetHighColor(210, 180, 20);
+            StrokeRect(selRect);
+        } else if (fToolMode == MODE_DRAW_RECT) {
+            SetHighColor(220, 20, 60);
+            SetPenSize(2.0f);
+            StrokeRect(selRect);
+            SetPenSize(1.0f);
+        } else if (fToolMode == MODE_ANNOTATE_TEXT) {
+            SetHighColor(255, 245, 157);
+            FillRect(selRect);
+            SetHighColor(200, 180, 50);
+            StrokeRect(selRect);
+        }
+    }
 }
 
 void
@@ -113,9 +184,19 @@ PDFView::MouseDown(BPoint where)
         currentMsg->FindInt32("buttons", &buttons);
 
     if ((buttons & B_PRIMARY_MOUSE_BUTTON) != 0) {
-        fIsDragging = true;
-        fLastMousePos = where;
-        SetMouseEventMask(B_POINTER_EVENTS, B_LOCK_WINDOW_FOCUS);
+        if (fToolMode == MODE_VIEW) {
+            fIsDragging = true;
+            fLastMousePos = where;
+            SetMouseEventMask(B_POINTER_EVENTS, B_LOCK_WINDOW_FOCUS);
+        } else if (fDocument != nullptr && fRenderedBitmap != nullptr) {
+            BRect pageRect = _CalculatePageRect();
+            if (pageRect.Contains(where)) {
+                fIsAnnotating = true;
+                fDragStart = where;
+                fDragCurrent = where;
+                SetMouseEventMask(B_POINTER_EVENTS, B_LOCK_WINDOW_FOCUS);
+            }
+        }
     }
     BView::MouseDown(where);
 }
@@ -127,6 +208,11 @@ PDFView::MouseMoved(BPoint where, uint32 transit, const BMessage* dragMessage)
         BPoint delta = where - fLastMousePos;
         ScrollBy(-delta.x, -delta.y);
         fLastMousePos = where - delta;
+    } else if (fIsAnnotating && fRenderedBitmap != nullptr) {
+        BRect pageRect = _CalculatePageRect();
+        fDragCurrent.x = std::clamp(where.x, pageRect.left, pageRect.right);
+        fDragCurrent.y = std::clamp(where.y, pageRect.top, pageRect.bottom);
+        Invalidate();
     }
     BView::MouseMoved(where, transit, dragMessage);
 }
@@ -134,8 +220,53 @@ PDFView::MouseMoved(BPoint where, uint32 transit, const BMessage* dragMessage)
 void
 PDFView::MouseUp(BPoint where)
 {
-    if (fIsDragging)
+    if (fIsDragging) {
         fIsDragging = false;
+    } else if (fIsAnnotating) {
+        fIsAnnotating = false;
+
+        if (fDocument != nullptr && fRenderedBitmap != nullptr) {
+            BRect pageRect = _CalculatePageRect();
+            BRect selRect(
+                std::min(fDragStart.x, fDragCurrent.x),
+                std::min(fDragStart.y, fDragCurrent.y),
+                std::max(fDragStart.x, fDragCurrent.x),
+                std::max(fDragStart.y, fDragCurrent.y)
+            );
+
+            if (fToolMode == MODE_ANNOTATE_TEXT && selRect.Width() < 20.0f) {
+                selRect.right = std::min(pageRect.right, selRect.left + 120.0f);
+                selRect.bottom = std::min(pageRect.bottom, selRect.top + 40.0f);
+            }
+
+            if (selRect.Width() > 4.0f && selRect.Height() > 4.0f) {
+                BRect unitBounds(
+                    (selRect.left - pageRect.left) / pageRect.Width(),
+                    (selRect.top - pageRect.top) / pageRect.Height(),
+                    (selRect.right - pageRect.left) / pageRect.Width(),
+                    (selRect.bottom - pageRect.top) / pageRect.Height()
+                );
+
+                Annotation ann;
+                ann.pageUnitBounds = unitBounds;
+
+                if (fToolMode == MODE_HIGHLIGHT) {
+                    ann.type = ANNOTATION_HIGHLIGHT;
+                    ann.color = rgb_color{255, 235, 59, 120};
+                } else if (fToolMode == MODE_DRAW_RECT) {
+                    ann.type = ANNOTATION_RECT;
+                    ann.color = rgb_color{220, 20, 60, 255};
+                } else if (fToolMode == MODE_ANNOTATE_TEXT) {
+                    ann.type = ANNOTATION_TEXT;
+                    ann.text = "Nota";
+                    ann.color = rgb_color{255, 245, 157, 255};
+                }
+
+                fDocument->AddAnnotation(fCurrentPage, ann);
+            }
+        }
+        Invalidate();
+    }
     BView::MouseUp(where);
 }
 
@@ -220,6 +351,33 @@ PDFView::SetZoom(float zoom)
         fZoom = zoom;
         _RenderCurrentPage();
     }
+}
+
+void
+PDFView::SetToolMode(ToolMode mode)
+{
+    fToolMode = mode;
+}
+
+void
+PDFView::RotateCurrentPage(int32 degrees)
+{
+    if (fDocument != nullptr) {
+        fDocument->RotatePage(fCurrentPage, degrees);
+        _RenderCurrentPage();
+    }
+}
+
+bool
+PDFView::DeleteCurrentPage()
+{
+    if (fDocument != nullptr && fDocument->DeletePage(fCurrentPage)) {
+        if (fCurrentPage >= fDocument->PageCount() && fCurrentPage > 0)
+            fCurrentPage--;
+        _RenderCurrentPage();
+        return true;
+    }
+    return false;
 }
 
 void

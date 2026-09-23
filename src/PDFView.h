@@ -1,6 +1,7 @@
 #ifndef PDF_VIEW_H
 #define PDF_VIEW_H
 
+#include "Annotation.h"
 #include "PDFDocument.h"
 
 #include <View.h>
@@ -35,6 +36,12 @@ public:
     void                        SetZoom(float zoom);
     float                       Zoom() const { return fZoom; }
 
+    void                        SetToolMode(ToolMode mode);
+    ToolMode                    GetToolMode() const { return fToolMode; }
+
+    void                        RotateCurrentPage(int32 degrees);
+    bool                        DeleteCurrentPage();
+
     void                        NextPage();
     void                        PreviousPage();
     void                        FirstPage();
@@ -53,8 +60,13 @@ private:
     float                       fZoom;
     BBitmap*                    fRenderedBitmap;
 
+    ToolMode                    fToolMode;
     bool                        fIsDragging;
     BPoint                      fLastMousePos;
+
+    bool                        fIsAnnotating;
+    BPoint                      fDragStart;
+    BPoint                      fDragCurrent;
 };
 
 #endif // PDF_VIEW_H

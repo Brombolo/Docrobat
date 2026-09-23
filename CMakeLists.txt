@@ -16,6 +16,7 @@ set(DOCROBAT_SOURCES
 )
 
 set(DOCROBAT_HEADERS
+    src/Annotation.h
     src/App.h
     src/MainWindow.h
     src/PDFDocument.h
