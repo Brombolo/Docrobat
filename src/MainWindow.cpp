@@ -1,18 +1,21 @@
 #include "MainWindow.h"
 #include "PDFView.h"
 
+#include <Alert.h>
 #include <Application.h>
-#include <LayoutBuilder.h>
-#include <GroupView.h>
-#include <MenuBar.h>
-#include <Menu.h>
-#include <MenuItem.h>
 #include <Button.h>
-#include <StringView.h>
-#include <ScrollView.h>
-#include <Path.h>
-#include <String.h>
+#include <GroupView.h>
 #include <InterfaceDefs.h>
+#include <LayoutBuilder.h>
+#include <Menu.h>
+#include <MenuBar.h>
+#include <MenuItem.h>
+#include <Path.h>
+#include <ScrollView.h>
+#include <String.h>
+#include <StringView.h>
+
+#include <cmath>
 
 MainWindow::MainWindow()
     : BWindow(BRect(100, 100, 950, 750), "Docrobat", B_TITLED_WINDOW,
@@ -22,12 +25,15 @@ MainWindow::MainWindow()
       fPDFView(nullptr),
       fScrollView(nullptr),
       fOpenPanel(nullptr),
+      fOpenButton(nullptr),
       fPrevButton(nullptr),
       fNextButton(nullptr),
       fPageInfoView(nullptr),
-      fZoomInButton(nullptr),
       fZoomOutButton(nullptr),
-      fZoomFitButton(nullptr)
+      fZoomInfoView(nullptr),
+      fZoomInButton(nullptr),
+      fZoomFitButton(nullptr),
+      fZoomResetButton(nullptr)
 {
     _BuildLayout();
 
@@ -67,41 +73,46 @@ MainWindow::_BuildLayout()
     fMenuBar->AddItem(viewMenu);
 
     BMenu* goMenu = new BMenu("Vai");
-    goMenu->AddItem(new BMenuItem("Pagina precedente", new BMessage(MSG_PAGE_PREV)));
-    goMenu->AddItem(new BMenuItem("Pagina successiva", new BMessage(MSG_PAGE_NEXT)));
+    goMenu->AddItem(new BMenuItem("Pagina precedente", new BMessage(MSG_PAGE_PREV), B_PAGE_UP));
+    goMenu->AddItem(new BMenuItem("Pagina successiva", new BMessage(MSG_PAGE_NEXT), B_PAGE_DOWN));
     fMenuBar->AddItem(goMenu);
 
-    // 2. Toolbar placeholder
+    // 2. Navigation & Zoom Toolbar
     fToolBar = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
     fToolBar->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
 
-    BButton* openButton = new BButton("openButton", "Apri", new BMessage(MSG_FILE_OPEN));
-    fPrevButton = new BButton("prevButton", "◀", new BMessage(MSG_PAGE_PREV));
-    fNextButton = new BButton("nextButton", "▶", new BMessage(MSG_PAGE_NEXT));
+    fOpenButton = new BButton("openButton", "Apri...", new BMessage(MSG_FILE_OPEN));
+    fPrevButton = new BButton("prevButton", "◀ Prec.", new BMessage(MSG_PAGE_PREV));
+    fNextButton = new BButton("nextButton", "Succ. ▶", new BMessage(MSG_PAGE_NEXT));
     fPageInfoView = new BStringView("pageInfoView", "Nessun documento");
 
     fZoomOutButton = new BButton("zoomOutButton", "−", new BMessage(MSG_ZOOM_OUT));
+    fZoomInfoView = new BStringView("zoomInfoView", "100%");
     fZoomInButton = new BButton("zoomInButton", "+", new BMessage(MSG_ZOOM_IN));
+    fZoomResetButton = new BButton("zoomResetButton", "100%", new BMessage(MSG_ZOOM_100));
     fZoomFitButton = new BButton("zoomFitButton", "Adatta", new BMessage(MSG_ZOOM_FIT));
 
     BLayoutBuilder::Group<>(fToolBar, B_HORIZONTAL, B_USE_SMALL_SPACING)
         .SetInsets(B_USE_SMALL_INSETS)
-        .Add(openButton)
-        .AddStrut(10.0f)
+        .Add(fOpenButton)
+        .AddStrut(12.0f)
         .Add(fPrevButton)
         .Add(fNextButton)
+        .AddStrut(6.0f)
         .Add(fPageInfoView)
         .AddGlue()
         .Add(fZoomOutButton)
+        .Add(fZoomInfoView)
         .Add(fZoomInButton)
+        .Add(fZoomResetButton)
         .Add(fZoomFitButton)
         .End();
 
-    // 3. Central PDF view
+    // 3. Central PDF view in BScrollView
     fPDFView = new PDFView("pdfView");
     fScrollView = new BScrollView("pdfScrollView", fPDFView, 0, true, true, B_PLAIN_BORDER);
 
-    // 4. Assemble with modern BLayoutBuilder
+    // 4. Assemble layout
     BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
         .Add(fMenuBar)
         .Add(fToolBar)
@@ -127,7 +138,7 @@ MainWindow::MessageReceived(BMessage* message)
         }
 
         case MSG_FILE_CLOSE:
-            fPDFView->SetBitmap(nullptr);
+            fPDFView->SetDocument(nullptr);
             SetTitle("Docrobat");
             _UpdateControls();
             break;
@@ -144,22 +155,27 @@ MainWindow::MessageReceived(BMessage* message)
 
         case MSG_ZOOM_IN:
             fPDFView->SetZoom(fPDFView->Zoom() * 1.25f);
+            _UpdateControls();
             break;
 
         case MSG_ZOOM_OUT:
             fPDFView->SetZoom(fPDFView->Zoom() / 1.25f);
+            _UpdateControls();
             break;
 
         case MSG_ZOOM_100:
             fPDFView->SetZoom(1.0f);
+            _UpdateControls();
             break;
 
         case MSG_ZOOM_FIT:
             if (fPDFView->Bitmap() != nullptr) {
                 float viewHeight = fPDFView->Bounds().Height() - 40.0f;
-                float originalHeight = fPDFView->Bitmap()->Bounds().Height() / fPDFView->Zoom();
-                if (originalHeight > 0.0f)
-                    fPDFView->SetZoom(viewHeight / originalHeight);
+                float origHeight = fPDFView->Bitmap()->Bounds().Height() / fPDFView->Zoom();
+                if (origHeight > 0.0f) {
+                    fPDFView->SetZoom(viewHeight / origHeight);
+                    _UpdateControls();
+                }
             }
             break;
 
@@ -200,6 +216,11 @@ MainWindow::OpenFile(const char* path)
         title.SetToFormat("Docrobat - %s", p.Leaf());
         SetTitle(title.String());
         _UpdateControls();
+    } else {
+        BAlert* alert = new BAlert("Docrobat",
+            "Impossibile aprire il file PDF selezionato o file non valido/protetto da password.",
+            "OK", nullptr, nullptr, B_WIDTH_AS_USUAL, B_STOP_ALERT);
+        alert->Go();
     }
 }
 
@@ -207,24 +228,31 @@ void
 MainWindow::_UpdateControls()
 {
     int32 current = fPDFView->CurrentPage();
-    int32 total = fPDFView->TotalPages();
+    int32 total = fPDFView->PageCount();
 
     if (total > 0) {
         BString info;
         info.SetToFormat("Pagina %d di %d", static_cast<int>(current + 1), static_cast<int>(total));
         fPageInfoView->SetText(info.String());
 
+        BString zoomStr;
+        zoomStr.SetToFormat("%d%%", static_cast<int>(std::round(fPDFView->Zoom() * 100.0f)));
+        fZoomInfoView->SetText(zoomStr.String());
+
         fPrevButton->SetEnabled(current > 0);
         fNextButton->SetEnabled(current + 1 < total);
         fZoomInButton->SetEnabled(true);
         fZoomOutButton->SetEnabled(true);
         fZoomFitButton->SetEnabled(true);
+        fZoomResetButton->SetEnabled(true);
     } else {
         fPageInfoView->SetText("Nessun documento");
+        fZoomInfoView->SetText("100%");
         fPrevButton->SetEnabled(false);
         fNextButton->SetEnabled(false);
         fZoomInButton->SetEnabled(false);
         fZoomOutButton->SetEnabled(false);
         fZoomFitButton->SetEnabled(false);
+        fZoomResetButton->SetEnabled(false);
     }
 }

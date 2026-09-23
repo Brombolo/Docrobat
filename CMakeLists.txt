@@ -11,12 +11,14 @@ set(DOCROBAT_SOURCES
     src/main.cpp
     src/App.cpp
     src/MainWindow.cpp
+    src/PDFDocument.cpp
     src/PDFView.cpp
 )
 
 set(DOCROBAT_HEADERS
     src/App.h
     src/MainWindow.h
+    src/PDFDocument.h
     src/PDFView.h
 )
 

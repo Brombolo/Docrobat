@@ -1,37 +1,29 @@
 #include "PDFView.h"
 
-#include <ScrollBar.h>
-#include <ScrollView.h>
 #include <Font.h>
 #include <InterfaceDefs.h>
+#include <ScrollBar.h>
+#include <ScrollView.h>
 #include <String.h>
-
-#include <poppler-document.h>
-#include <poppler-page.h>
-#include <poppler-page-renderer.h>
-#include <poppler-image.h>
+#include <Window.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <cstdlib>
 
 PDFView::PDFView(const char* name)
     : BView(name, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE | B_FULL_UPDATE_ON_RESIZE),
-      fRenderedBitmap(nullptr),
-      fZoom(1.0f),
+      fDocument(nullptr),
       fCurrentPage(0),
-      fTotalPages(0),
+      fZoom(1.0f),
+      fRenderedBitmap(nullptr),
       fIsDragging(false),
-      fLastMousePos(0, 0),
-      fCurrentFilePath(nullptr)
+      fLastMousePos(0, 0)
 {
 }
 
 PDFView::~PDFView()
 {
     delete fRenderedBitmap;
-    free(fCurrentFilePath);
 }
 
 void
@@ -48,7 +40,7 @@ PDFView::Draw(BRect updateRect)
     BRect bounds = Bounds();
 
     if (fRenderedBitmap == nullptr) {
-        // Draw empty state placeholder
+        // Empty state view
         SetLowColor(ui_color(B_PANEL_BACKGROUND_COLOR));
         FillRect(updateRect, B_SOLID_LOW);
 
@@ -65,12 +57,12 @@ PDFView::Draw(BRect updateRect)
         float subWidth = StringWidth(subtitle);
 
         BPoint titlePos(
-            std::max(10.0f, (bounds.Width() - titleWidth) / 2.0f),
-            std::max(30.0f, (bounds.Height() / 2.0f) - 15.0f)
+            std::max(10.0f, bounds.left + (bounds.Width() - titleWidth) / 2.0f),
+            std::max(30.0f, bounds.top + (bounds.Height() / 2.0f) - 15.0f)
         );
         BPoint subPos(
-            std::max(10.0f, (bounds.Width() - subWidth) / 2.0f),
-            std::max(50.0f, (bounds.Height() / 2.0f) + 15.0f)
+            std::max(10.0f, bounds.left + (bounds.Width() - subWidth) / 2.0f),
+            std::max(50.0f, bounds.top + (bounds.Height() / 2.0f) + 15.0f)
         );
 
         DrawString(title, titlePos);
@@ -84,14 +76,7 @@ PDFView::Draw(BRect updateRect)
     SetLowColor(tint_color(ui_color(B_PANEL_BACKGROUND_COLOR), B_DARKEN_1_TINT));
     FillRect(updateRect, B_SOLID_LOW);
 
-    BRect bmpBounds = fRenderedBitmap->Bounds();
-    float x = 20.0f;
-    if (bounds.Width() > bmpBounds.Width() + 40.0f)
-        x = (bounds.Width() - bmpBounds.Width()) / 2.0f;
-
-    float y = 20.0f;
-
-    BRect pageRect(x, y, x + bmpBounds.Width(), y + bmpBounds.Height());
+    BRect pageRect = _CalculatePageRect();
 
     // Draw drop shadow
     BRect shadowRect = pageRect;
@@ -106,7 +91,7 @@ PDFView::Draw(BRect updateRect)
     // Render bitmap onto view
     DrawBitmap(fRenderedBitmap, pageRect);
 
-    // Border around page
+    // Draw border around page
     SetHighColor(tint_color(ui_color(B_PANEL_BACKGROUND_COLOR), B_DARKEN_4_TINT));
     StrokeRect(pageRect);
 }
@@ -155,15 +140,72 @@ PDFView::MouseUp(BPoint where)
 }
 
 void
-PDFView::SetBitmap(BBitmap* bitmap)
+PDFView::KeyDown(const char* bytes, int32 numBytes)
 {
-    if (fRenderedBitmap != bitmap) {
-        delete fRenderedBitmap;
-        fRenderedBitmap = bitmap;
+    if (numBytes == 1) {
+        switch (bytes[0]) {
+            case B_PAGE_UP:
+                PreviousPage();
+                return;
+            case B_PAGE_DOWN:
+                NextPage();
+                return;
+            case B_HOME:
+                FirstPage();
+                return;
+            case B_END:
+                LastPage();
+                return;
+            case '+':
+            case '=':
+                SetZoom(fZoom * 1.25f);
+                return;
+            case '-':
+                SetZoom(fZoom / 1.25f);
+                return;
+        }
     }
+    BView::KeyDown(bytes, numBytes);
+}
 
-    _UpdateScrollBars();
-    Invalidate();
+void
+PDFView::SetDocument(std::shared_ptr<PDFDocument> document)
+{
+    fDocument = document;
+    fCurrentPage = 0;
+    _RenderCurrentPage();
+}
+
+bool
+PDFView::LoadDocument(const char* filePath)
+{
+    if (filePath == nullptr)
+        return false;
+
+    auto doc = std::make_shared<PDFDocument>();
+    if (!doc->LoadFromFile(filePath))
+        return false;
+
+    SetDocument(doc);
+    return true;
+}
+
+void
+PDFView::SetCurrentPage(int32 pageIndex)
+{
+    if (pageIndex < 0 || pageIndex >= PageCount())
+        return;
+
+    if (fCurrentPage != pageIndex) {
+        fCurrentPage = pageIndex;
+        _RenderCurrentPage();
+    }
+}
+
+int32
+PDFView::PageCount() const
+{
+    return fDocument ? fDocument->PageCount() : 0;
 }
 
 void
@@ -176,54 +218,42 @@ PDFView::SetZoom(float zoom)
 
     if (std::fabs(fZoom - zoom) > 0.001f) {
         fZoom = zoom;
-        if (fCurrentFilePath != nullptr)
-            _RenderCurrentPage();
+        _RenderCurrentPage();
     }
-}
-
-void
-PDFView::SetPageInfo(int32 current, int32 total)
-{
-    fCurrentPage = current;
-    fTotalPages = total;
-}
-
-bool
-PDFView::LoadDocument(const char* filePath)
-{
-    if (filePath == nullptr)
-        return false;
-
-    free(fCurrentFilePath);
-    fCurrentFilePath = strdup(filePath);
-
-    std::unique_ptr<poppler::document> doc(poppler::document::load_from_file(filePath));
-    if (!doc || doc->is_locked())
-        return false;
-
-    fTotalPages = doc->pages();
-    fCurrentPage = 0;
-
-    _RenderCurrentPage();
-    return true;
 }
 
 void
 PDFView::NextPage()
 {
-    if (fCurrentPage + 1 < fTotalPages) {
-        fCurrentPage++;
-        _RenderCurrentPage();
-    }
+    if (fCurrentPage + 1 < PageCount())
+        SetCurrentPage(fCurrentPage + 1);
 }
 
 void
 PDFView::PreviousPage()
 {
-    if (fCurrentPage > 0) {
-        fCurrentPage--;
-        _RenderCurrentPage();
-    }
+    if (fCurrentPage > 0)
+        SetCurrentPage(fCurrentPage - 1);
+}
+
+void
+PDFView::FirstPage()
+{
+    if (PageCount() > 0)
+        SetCurrentPage(0);
+}
+
+void
+PDFView::LastPage()
+{
+    if (PageCount() > 0)
+        SetCurrentPage(PageCount() - 1);
+}
+
+void
+PDFView::RefreshPage()
+{
+    _RenderCurrentPage();
 }
 
 void
@@ -252,43 +282,46 @@ PDFView::_UpdateScrollBars()
 
     h->SetProportion(contentWidth > 0.0f ? bounds.Width() / contentWidth : 1.0f);
     v->SetProportion(contentHeight > 0.0f ? bounds.Height() / contentHeight : 1.0f);
+
+    h->SetSteps(20.0f, std::max(20.0f, bounds.Width() * 0.75f));
+    v->SetSteps(20.0f, std::max(20.0f, bounds.Height() * 0.75f));
 }
 
 void
 PDFView::_RenderCurrentPage()
 {
-    if (fCurrentFilePath == nullptr)
-        return;
+    delete fRenderedBitmap;
+    fRenderedBitmap = nullptr;
 
-    std::unique_ptr<poppler::document> doc(poppler::document::load_from_file(fCurrentFilePath));
-    if (!doc || fCurrentPage < 0 || fCurrentPage >= doc->pages())
-        return;
-
-    std::unique_ptr<poppler::page> page(doc->create_page(fCurrentPage));
-    if (!page)
-        return;
-
-    poppler::page_renderer renderer;
-    renderer.set_image_format(poppler::image::format_argb32);
-
-    double dpi = 72.0 * static_cast<double>(fZoom);
-    poppler::image img = renderer.render_page(page.get(), dpi, dpi);
-
-    if (!img.is_valid())
-        return;
-
-    BRect rect(0, 0, img.width() - 1, img.height() - 1);
-    BBitmap* newBitmap = new BBitmap(rect, B_RGBA32);
-
-    const char* src = img.data();
-    uint8* dst = static_cast<uint8*>(newBitmap->Bits());
-    int32 srcRowBytes = img.bytes_per_row();
-    int32 dstRowBytes = newBitmap->BytesPerRow();
-    int32 copyRowBytes = std::min(srcRowBytes, dstRowBytes);
-
-    for (int y = 0; y < img.height(); ++y) {
-        memcpy(dst + (y * dstRowBytes), src + (y * srcRowBytes), copyRowBytes);
+    if (fDocument && fDocument->IsValid() && fCurrentPage >= 0 && fCurrentPage < fDocument->PageCount()) {
+        fRenderedBitmap = fDocument->RenderPageToBitmap(fCurrentPage, fZoom);
     }
 
-    SetBitmap(newBitmap);
+    _UpdateScrollBars();
+    Invalidate();
+}
+
+BRect
+PDFView::_CalculatePageRect() const
+{
+    BRect bounds = Bounds();
+    if (fRenderedBitmap == nullptr)
+        return BRect(0, 0, 0, 0);
+
+    float bmpW = fRenderedBitmap->Bounds().Width();
+    float bmpH = fRenderedBitmap->Bounds().Height();
+
+    float x = 20.0f;
+    if (bounds.Width() > bmpW + 40.0f)
+        x = bounds.left + (bounds.Width() - bmpW) / 2.0f;
+    else
+        x = 20.0f;
+
+    float y = 20.0f;
+    if (bounds.Height() > bmpH + 40.0f)
+        y = bounds.top + (bounds.Height() - bmpH) / 2.0f;
+    else
+        y = 20.0f;
+
+    return BRect(x, y, x + bmpW, y + bmpH);
 }

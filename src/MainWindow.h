@@ -18,8 +18,9 @@ enum {
     MSG_FILE_CLOSE      = 'DOCC',
     MSG_FILE_SAVE       = 'DOCS',
     MSG_FILE_SAVE_AS    = 'DOCA',
-    MSG_PAGE_PREV       = 'PREV',
-    MSG_PAGE_NEXT       = 'NEXT',
+    MSG_PAGE_PREV       = 'PGUP',
+    MSG_PAGE_NEXT       = 'PGDN',
+    MSG_ZOOM            = 'ZOOM',
     MSG_ZOOM_IN         = 'ZMIN',
     MSG_ZOOM_OUT        = 'ZOUT',
     MSG_ZOOM_100        = 'Z100',
@@ -47,12 +48,15 @@ private:
     BScrollView*            fScrollView;
     BFilePanel*             fOpenPanel;
 
+    BButton*                fOpenButton;
     BButton*                fPrevButton;
     BButton*                fNextButton;
     BStringView*            fPageInfoView;
-    BButton*                fZoomInButton;
     BButton*                fZoomOutButton;
+    BStringView*            fZoomInfoView;
+    BButton*                fZoomInButton;
     BButton*                fZoomFitButton;
+    BButton*                fZoomResetButton;
 };
 
 #endif // MAIN_WINDOW_H
